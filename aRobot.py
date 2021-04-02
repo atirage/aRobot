@@ -1,38 +1,50 @@
-import usocket as socket
-import uasyncio as asyncio
-import ujson
-import machine
+#upython
+#import usocket as socket
+#import uasyncio as asyncio
+#import ujson as json
+#import machine
+#import aHBridge_ESP as dualHbr
+
+import socket
+import asyncio
+import json
+import aHBridge_PCA as dualHbr
 
 server = '192.168.0.101'
 port = 65432
 
 async def heartbeat(tms):
-    led = machine.Pin(2, machine.Pin.OUT, value=1)
+    #led = machine.Pin(2, machine.Pin.OUT, value=1)
     while True:
-        led(not led())
-        await asyncio.sleep_ms(tms)
+        #led(not led())
+        #await asyncio.sleep_ms(tms)
+        await asyncio.sleep(tms / 1000)
 
 async def listen(robo):
-    sock = socket.socket()
+    #sock = socket.socket()
     try:
-        serv = socket.getaddrinfo(server, port)[0][-1]
-        sock.connect(serv)
+        #serv = socket.getaddrinfo(server, port)[0][-1]
+        #sock.connect(serv)
+        sreader, swriter = await asyncio.open_connection(server, port)
     except OSError:
         print('Cannot connect to {} on port {}'.format(server, port))
-        sock.close()
+        #sock.close()
         return
-    swriter = asyncio.StreamWriter(sock, {})
-    await swriter.awrite('{}\n'.format(ujson.dumps(['ready', 1])))
+    #swriter = asyncio.StreamWriter(sock, {})
+    #await swriter.awrite('{}\n'.format(json.dumps(['ready', 1])))
+    rsp = '{}\n'.format(json.dumps(['ready', 1]))
+    swriter.write(rsp.encode())
     while True:
-        sreader = asyncio.StreamReader(sock)
+        #sreader = asyncio.StreamReader(sock)
         while True:
             try:
                 res = await sreader.readline()
             except OSError:
-                sock.close()
+                swriter.close()
+                #await writer.wait_closed()
                 return
             try:
-                cmd = ujson.loads(res)
+                cmd = json.loads(res)
                 s = cmd["Speed"]
                 l = r = 50
                 if cmd["Angle"] <= 0:
@@ -43,12 +55,15 @@ async def listen(robo):
                     #turn right
                     l = 50
                     r = 50 - cmd["Angle"]                       
-                robo.remote_ctrl((s * l * 1023) // 5000,
-                                 (s * r * 1023) // 5000)
+                robo.remote_ctrl((s * l),
+                                 (s * r))
             except ValueError:
-                sock.close()
+                #sock.close()
+                swriter.close()
+                #await writer.wait_closed()
                 return
-            await asyncio.sleep_ms(20)
+            #await asyncio.sleep_ms(20)
+            await asyncio.sleep(0.02)
 
 class aRobot:
     def __init__(self):
@@ -84,30 +99,14 @@ class aRobot:
         ]
         self.Vbat = 9.6
         self.dc = [0, 0]
-        #left motor
-        pin = machine.Pin(14)
-        self.in1 = machine.PWM(pin)
-        self.in1.freq(1000)
-        self.in1.duty(0)
-        pin = machine.Pin(0)
-        self.in2 = machine.PWM(pin)
-        self.in2.freq(1000)
-        self.in2.duty(0)
-        #right motor
-        pin = machine.Pin(4)
-        self.in3 = machine.PWM(pin)
-        self.in3.freq(1000)
-        self.in3.duty(0)
-        pin = machine.Pin(5)
-        self.in4 = machine.PWM(pin)
-        self.in4.freq(1000)
-        self.in4.duty(0)
+        #self.dhb = dualHbr.aDualHBridge(14, 0, 4, 5, 1000)
+        self.dhb = dualHbr.aDualHBridge(0, 1, 2, 3, 1000)
 
     def remote_ctrl(self, left, right):
         #print(left, right)
         self.behaviors[2]["ctrl"] = 1
-        self.behaviors[2]["dcLeft"] = (1023 * left) // 100
-        self.behaviors[2]["dcRight"]= (1023 * right ) // 100
+        self.behaviors[2]["dcLeft"] = left
+        self.behaviors[2]["dcRight"]= right
 
     def arbitrate(self):
         result = sorted([(b["prio"], b["dcLeft"], b["dcRight"]) for b in self.behaviors if b["ctrl"] != 0], key = lambda x: x[0])
@@ -119,28 +118,20 @@ class aRobot:
     
     def execute(self, dc):
         if self.dc[0] != dc[0]:
+            self.dhb.duty_m1(self.dc[0] / 5000)
             self.dc[0] = dc[0]
-            if dc[0] < 0:
-                self.in1.duty(0)
-                self.in2.duty(-dc[0])
-            else:
-                self.in1.duty(dc[0])
-                self.in2.duty(0)
+
         if self.dc[1] != dc[1]:
+            self.dhb.duty_m2(self.dc[1] / 5000)
             self.dc[1] = dc[1]
-            if dc[1] < 0:
-                self.in3.duty(0)
-                self.in4.duty(-dc[1])
-            else:
-                self.in3.duty(dc[1])
-                self.in4.duty(0)
 
     async def run(self):
         while True:
-            self.Vbat = machine.ADC(0).read() * 11 / 1024
+            self.Vbat = 6.0#machine.ADC(0).read() * 11 / 1024
             #self.remote_ctrl(512, 512) #pwm range 0:1024
             self.execute(dc = self.arbitrate())
-            await asyncio.sleep_ms(50)
+            #await asyncio.sleep_ms(50)
+            await asyncio.sleep(0.05)
 
 def start():
     robo = aRobot()

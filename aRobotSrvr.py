@@ -60,6 +60,3 @@ thr.start()
 top.mainloop()
 stop_thr = True
 thr.join()          
-            
-
-
